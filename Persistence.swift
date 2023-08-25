@@ -19,83 +19,7 @@ class CoreDataManager {
         }
     }
     
-    func saveImage(filePath: String, tags: [String], locationName: String?, locationCoordinates: CLLocationCoordinate2D?, timestamp: Date?) {
-        let context = persistentContainer.viewContext
-        
-        // Check if image already exists in CoreData
-        let fileName = (filePath as NSString).lastPathComponent
-        let normalizedFileName = fileName.lowercased() // Normalize to lowercase to ignore casing
-        let fetchRequest: NSFetchRequest<ImageData> = ImageData.fetchRequest()
-        fetchRequest.predicate = NSPredicate(format: "filePath == %@", normalizedFileName)
-
-        do {
-            let matchingImages = try context.fetch(fetchRequest)
-            let image: ImageData
-            
-            if let existingImage = matchingImages.first {
-                image = existingImage
-                print("Found existing image with fileName: \(fileName)")
-            } else {
-                image = ImageData(context: context)
-                image.id = UUID()
-                image.filePath = fileName
-                image.locationName = locationName
-                image.latitude = locationCoordinates?.latitude ?? 0
-                image.longitude = locationCoordinates?.longitude ?? 0;
-                print("Saving new image with fileName: \(fileName)")
-            }
-            
-            for tagText in tags {
-                let fetchTagRequest: NSFetchRequest<Tag> = Tag.fetchRequest()
-                fetchTagRequest.predicate = NSPredicate(format: "text == %@", tagText)
-                
-                let matchingTags = try context.fetch(fetchTagRequest)
-                if let existingTag = matchingTags.first {
-                    image.addToTags(existingTag)
-                    print("Adding existing tag: \(existingTag.text!)")
-                } else {
-                    let tag = Tag(context: context)
-                    tag.id = UUID()
-                    tag.text = tagText
-                    image.addToTags(tag)
-                    print("Creating new tag: \(tag.text!)")
-                }
-            }
-            
-            // Load UIImage
-            let uiImage = CoreDataManager.loadImageFromDiskWith(fileName: fileName)
-            
-            // Perform Object Recognition
-            let objectRecognitionProcessor = ObjectRecognitionProcessor()
-            objectRecognitionProcessor.recognizeObjects(in: uiImage) { recognizedObjects in
-                let recognizedObjectsString = recognizedObjects?.joined(separator: ", ")
-                image.recognizedObjects = recognizedObjectsString
-            }
-            
-            // Save the context after adding/updating image and tags
-            try context.save()
-        } catch {
-            print("Failed to save or update image context: \(error)")
-        }
-    }
-
-
-    
-    
-    static func loadImageFromDiskWith(fileName: String) -> UIImage {
-        let documentDirectory = FileManager.SearchPathDirectory.documentDirectory
-        let userDomainMask = FileManager.SearchPathDomainMask.userDomainMask
-        let paths = NSSearchPathForDirectoriesInDomains(documentDirectory, userDomainMask, true)
-        
-        if let dirPath = paths.first {
-            let imageUrl = URL(fileURLWithPath: dirPath).appendingPathComponent(fileName)
-            print("Loading image from URL: \(imageUrl)")
-            let image = UIImage(contentsOfFile: imageUrl.path)
-            return image ?? UIImage()
-        }
-        return UIImage()
-    }
-    
+    // Check for Last Launch Date and Saves it to User Defaults
     func updateLaunchDates() {
         print("Current LastLaunchDate: \(UserDefaults.standard.object(forKey: "LastLaunchDate") ?? "Not Set")")
         print("Current PreviousLaunchDate: \(UserDefaults.standard.object(forKey: "PreviousLaunchDate") ?? "Not Set")")
@@ -106,6 +30,9 @@ class CoreDataManager {
         }
         UserDefaults.standard.set(Date(), forKey: "LastLaunchDate")
     }
+    
+    
+    // Use Last Launch Date to fetch new screenshots and saves them to Core Data. Applies OCR and ORP
     
     func fetchAndSaveScreenshots() {
         let fetchOptions = PHFetchOptions()
@@ -162,11 +89,93 @@ class CoreDataManager {
             print("No previous launch date found.")
         }
     }
+    
+    
+    // Save Image Function is Executed after a user Tags an image
+    
+    func saveImage(filePath: String, tags: [String], locationName: String?, locationCoordinates: CLLocationCoordinate2D?, timestamp: Date?) {
+        let context = persistentContainer.viewContext
+        
+        // Check if image already exists in CoreData
+        let fileName = (filePath as NSString).lastPathComponent
+        let normalizedFileName = fileName.lowercased()
+        let fetchRequest: NSFetchRequest<ImageData> = ImageData.fetchRequest()
+        fetchRequest.predicate = NSPredicate(format: "filePath == %@", normalizedFileName)
 
+        do {
+            let matchingImages = try context.fetch(fetchRequest)
+            let image: ImageData
+            
+            if let existingImage = matchingImages.first {
+                image = existingImage
+                print("Found existing image with fileName: \(fileName)")
+            } else {
+                image = ImageData(context: context)
+                image.id = UUID()
+                image.filePath = fileName
+                image.locationName = locationName
+                image.latitude = locationCoordinates?.latitude ?? 0
+                image.longitude = locationCoordinates?.longitude ?? 0;
+                print("Saving new image with fileName: \(fileName)")
+            }
+           
+            // When a user applies a Tag we first check if the tag exists to avoid duplication
+            
+            for tagText in tags {
+                let fetchTagRequest: NSFetchRequest<Tag> = Tag.fetchRequest()
+                fetchTagRequest.predicate = NSPredicate(format: "text == %@", tagText)
+                
+                let matchingTags = try context.fetch(fetchTagRequest)
+                if let existingTag = matchingTags.first {
+                    image.addToTags(existingTag)
+                    print("Adding existing tag: \(existingTag.text!)")
+                } else {
+                    let tag = Tag(context: context)
+                    tag.id = UUID()
+                    tag.text = tagText
+                    image.addToTags(tag)
+                    print("Creating new tag: \(tag.text!)")
+                }
+            }
+            
+            // Before finalising the Save we use the Object Recogition Processor, find the recognised objects and save them to CoreData
+            
+            // Load UIImage
+            let uiImage = CoreDataManager.loadImageFromDiskWith(fileName: fileName)
+            
+            // Perform Object Recognition
+            let objectRecognitionProcessor = ObjectRecognitionProcessor()
+            objectRecognitionProcessor.recognizeObjects(in: uiImage) { recognizedObjects in
+                let recognizedObjectsString = recognizedObjects?.joined(separator: ", ")
+                image.recognizedObjects = recognizedObjectsString
+            }
+            
+            // Save the context after adding/updating image and tags
+            try context.save()
+        } catch {
+            print("Failed to save or update image context: \(error)")
+        }
+    }
+
+
+    // Loads Images to Dispays in Views
+    
+    static func loadImageFromDiskWith(fileName: String) -> UIImage {
+        let documentDirectory = FileManager.SearchPathDirectory.documentDirectory
+        let userDomainMask = FileManager.SearchPathDomainMask.userDomainMask
+        let paths = NSSearchPathForDirectoriesInDomains(documentDirectory, userDomainMask, true)
+        
+        if let dirPath = paths.first {
+            let imageUrl = URL(fileURLWithPath: dirPath).appendingPathComponent(fileName)
+            print("Loading image from URL: \(imageUrl)")
+            let image = UIImage(contentsOfFile: imageUrl.path)
+            return image ?? UIImage()
+        }
+        return UIImage()
+    }
     
     
-    
-    
+    // Fetches Image Data from Core Data to Display in UI
     
     func fetchImageData(for identifier: String) -> ImageData? {
         let fetchRequest: NSFetchRequest<ImageData> = ImageData.fetchRequest()
@@ -178,6 +187,36 @@ class CoreDataManager {
             print("Failed to fetch ImageData for identifier: \(identifier). Error: \(error)")
             return nil
         }
+    }
+    
+    // Fetches Stores Locations from Core Data to Display in UI
+    
+    func fetchStoredLocationsFromCoreData() -> [StoredLocation] {
+        let context = persistentContainer.viewContext
+        let fetchRequest: NSFetchRequest<ImageData> = ImageData.fetchRequest()
+        
+        do {
+            let images = try context.fetch(fetchRequest)
+            var locations: [StoredLocation] = []
+            
+            // Group images by location using Coordinate struct
+            let groupedImages = Dictionary(grouping: images, by: { Coordinate(latitude: $0.latitude, longitude: $0.longitude) })
+            
+            for (coordinate, images) in groupedImages {
+                let location = StoredLocation(id: UUID().uuidString, latitude: coordinate.latitude, longitude: coordinate.longitude, notesCount: images.count)
+                locations.append(location)
+            }
+            
+            return locations
+        } catch {
+            print("Failed to fetch locations from CoreData: \(error)")
+            return []
+        }
+    }
+
+    func fetchStoredLocation(by identifier: String) -> StoredLocation? {
+        let storedLocations = fetchStoredLocationsFromCoreData()
+        return storedLocations.first { $0.id == identifier }
     }
     
     func hasNewScreenshots() -> Bool {
@@ -210,33 +249,7 @@ class CoreDataManager {
         return image
     }
     
-    func fetchStoredLocationsFromCoreData() -> [StoredLocation] {
-        let context = persistentContainer.viewContext
-        let fetchRequest: NSFetchRequest<ImageData> = ImageData.fetchRequest()
-        
-        do {
-            let images = try context.fetch(fetchRequest)
-            var locations: [StoredLocation] = []
-            
-            // Group images by location using Coordinate struct
-            let groupedImages = Dictionary(grouping: images, by: { Coordinate(latitude: $0.latitude, longitude: $0.longitude) })
-            
-            for (coordinate, images) in groupedImages {
-                let location = StoredLocation(id: UUID().uuidString, latitude: coordinate.latitude, longitude: coordinate.longitude, notesCount: images.count)
-                locations.append(location)
-            }
-            
-            return locations
-        } catch {
-            print("Failed to fetch locations from CoreData: \(error)")
-            return []
-        }
-    }
-
-    func fetchStoredLocation(by identifier: String) -> StoredLocation? {
-        let storedLocations = fetchStoredLocationsFromCoreData()
-        return storedLocations.first { $0.id == identifier }
-    }
+    
 
 
 
